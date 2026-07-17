@@ -1,0 +1,137 @@
+---
+title: "Final Project Survey"
+author: "Suzy Molina"
+date: "2026-05-05"
+output: html_document
+---
+
+```{r, include=FALSE}
+
+library(haven)
+library(dplyr)
+library(survey)
+library(gtsummary)
+
+```
+
+```{r}
+
+data <- read_sas("C:/Users/nmolin/OneDrive - University of Iowa/Documents/BIOS 6420 Mary and Jake/llcp2024.sas7bdat")
+
+
+
+
+options(survey.lonely.psu = "adjust") # controls single-PSU strata
+
+design <- svydesign(
+  id = ~`_PSU`,  # primary sampling unit
+  strata = ~`_STSTR`, # stratification
+  weights = ~`_LLCPWT`,  # weight for landline/cell
+  data = data,
+  nest = TRUE
+)
+
+# remember: at least two categorical responses
+# two-way tables 
+# hypothesis test
+
+############# Hypothesis Test ###############
+# Cancer screening vs Demographics
+
+# Variable 1 (Response) _CRCREC3 - This is calculated variable for "Up to date on Color Cancer Screening"
+
+# Variable 2 (Predictor) _EDUCAG - Computed level of education (check the levels)
+
+############ Logistic Regression (binary) ##############
+
+### Cancer Survivor ship Status ####
+
+# Response Variable (Binary): CHCSCNC1 - "Ever told you had skin cancer?" 
+# CHCOCON1 - "Ever told you had any other types of cancer?"
+
+# Covariates: _AGE_G - Imputed age groups
+# _SEX - calculated sex
+# SMOKE100 - Have you smoked at least 100 cigarettes in your entire life?
+#_BMI5CAT - Computed Body Mass Index categories.
+
+design <- update(design,
+                 cancer_binary = ifelse(CHCOCNC1 == 1, 1,
+                 ifelse(CHCOCNC1 == 2, 0, NA)))
+
+# SMOKE100 AND _SEX ARE 1S AND 2S
+design <- update(design, 
+                 age_group = factor(`_AGE_G`, 
+                                    levels = c(1, 2, 3, 4, 5, 6), 
+                                    labels = c("18-24", "25-34", "35-44", "45-54", "55-64", "65+")),
+                 smoking = factor(SMOKE100, 
+                                          levels = c(1, 2), 
+                                          labels = c("Smoker (100+ Cigs)", "Non-Smoker")),
+                 BMI_C = factor(`_BMI5CAT`, 
+                                       levels = c(1, 2, 3, 4), 
+                                       labels = c("Underweight", "Normal Weight", "Overweight", "Obese")),
+                 Sex = factor(`_SEX`, 
+                              levels = c(1, 2), 
+                              labels = c("Male", "Female")))
+
+
+
+cancer_model <- svyglm(cancer_binary ~ age_group + 
+                         Sex + smoking + BMI_C, 
+                       design = design, 
+                       family = quasibinomial())
+summary(cancer_model)
+
+# Odds Ratio of the model
+exp(coef(cancer_model))
+
+
+############# TWO-WAY TABLE (EDUCATION VS. COLON CANCER SCREENING) ##############
+
+design <- update(design, 
+                 Education_Level = factor(`_EDUCAG`, 
+                                          levels = c(1, 2, 3, 4), 
+                                          labels = c("Less than High School", "High School Grad", "Some College", "College Grad")),
+                 Screening_Status = factor(`_CRCREC3`, 
+                                           levels = c(1, 2, 3), 
+                                           labels = c("Up to Date", "Off Schedule", "Never Screened")))
+
+#'deff = TRUE' -> the design effect as in leture 6
+screening_table <- svytable(~`_CRCREC3` + `_EDUCAG`,
+                            design = design)
+
+screening_deff <- svyby(~as.factor(`_CRCREC3`), ~as.factor(`_EDUCAG`),
+                        design = design,
+                        FUN = svymean,
+                        deff = TRUE,
+                        na.rm = TRUE)
+
+print(screening_deff)
+
+# This is Rao-Scott Chi-Square test for signficance
+svychisq(~`_CRCREC3` + `_EDUCAG`, design = design)
+
+
+
+```
+
+```{r}
+###### Logistic Regression Table #######
+r_table <- tbl_regression(cancer_model, exponentiate = TRUE) %>% 
+  bold_p(t = 0.05) %>% 
+  modify_caption("**Table 1. Predictors of Cancer Survivorship (Odds Ratios)**")
+
+r_table
+
+####### Two-Way Table ########
+
+screening_summary_table <- design %>% 
+  tbl_svysummary(
+    by = Education_Level, 
+    include = c(Screening_Status),
+    statistic = list(all_categorical() ~ "{p}%")
+  ) %>% 
+  add_p() %>% 
+  modify_caption("**Table 2. Colon Cancer Screening by Educational Level**")
+
+screening_summary_table
+```
