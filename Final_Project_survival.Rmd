@@ -1,0 +1,154 @@
+---
+title: "Final Project Survival"
+author: "Suzy Molina"
+date: "2026-05-07"
+output: pdf_document
+---
+
+```{r}
+
+library(survival)
+library(gtsummary)
+library(cmprsk)
+set.seed(120401)
+```
+
+Step 2: Summary of variables
+```{r}
+# Defining PBC (Primary Biliary Cholangitis)
+myid = sample(pbc$id, 400)
+mypbc = subset(pbc, id %in% myid)
+
+# Variables
+vars <- mypbc[, c("age", "bili", "albumin", "platelet", "sex",
+                  "edema", "ascites", "stage", "trt", "status", "time")]
+
+# summary table
+table1 <- tbl_summary(
+  vars,
+  statistic = list(
+    all_continuous() ~ "{mean} ({sd})",
+    all_categorical() ~ "{n} ({p}%)"
+  ),
+  missing_text = "Missing"
+)
+
+table1
+print(table1)
+
+
+```
+
+Step 3: Kaplan-Meier Survival Curves
+```{r}
+# in the default status: 0 = censored, 1 = transplant, 2 = dead
+# patientsw/transplant = censored (time of their transplant)
+mypbc$event_death <- ifelse(mypbc$status == 2, 1, 0) #KM curve for time to death
+#patientsw/death = censored
+mypbc$event_transplant <- ifelse(mypbc$status == 1, 1, 0) #KM curve for time to liver transplant
+
+#KM Curve for event_death
+km_death <- survfit(Surv(time, event_death) ~ 1, data = mypbc)
+print(km_death, print.rmean = TRUE)
+
+plot(km_death,
+           main = "Kaplan-Meier Curve for Time to Death",
+           xlab = "Time (Days)",
+           ylab = "Survival Probability",
+           col = "blue",
+           lwd = 2,
+           mark.table = TRUE)
+
+#KM Curve for event_transplant
+km_trans <- survfit(Surv(time, event_transplant) ~ 1, data = mypbc)
+print(km_trans, print.rmean = TRUE)
+
+plot(km_trans,
+           main = "Kaplan-Meier Curve for Time to Liver Transplant",
+           xlab = "Time (Days)",
+           ylab = "Survival Probability",
+           col = "green",
+           lwd = 2,
+           mark.table = TRUE)
+
+```
+
+Step 4: Cox Proportional Hazards Model
+```{r}
+# Make sure to have status coming out
+vars_for_model <- c("time", "event_death", "age", "bili", "albumin", 
+                    "platelet", "sex", "edema", "ascites", "stage", "trt", "status")
+
+mypbc_complete <- na.omit(mypbc[,vars_for_model])
+# Cox proportional Hazards Model (Time to Death)
+
+########## Double-Check on these variables bili, edema and stage #########
+# Are they suppose to be all log or log and strata
+# Strata - stage and edema are categorical variables (Ask Yohanna)
+# log transformation - reguires continous variables
+cox_log <- coxph(Surv(time, event_death) ~ age + 
+                    log(bili) + albumin + sex + strata(edema) +
+                    strata(stage), data = mypbc_complete)
+
+
+
+summary(cox_log)
+print(cox.zph(cox_log))
+
+# Wanna double-check
+plot(predict(cox_log), residuals(cox_log, type = "martingale"))
+
+```
+
+AFT Model
+```{r}
+# WeIBull AFT model
+wei_aft <- survreg(Surv(time, event_death) ~ age + log(bili) + albumin + factor(edema) + factor(stage),
+                   data = mypbc_complete, dist = "weibull")
+wei_final <- step(wei_aft, direction = "both", trace = 0)
+summary(wei_final)
+
+#Log-normal AFT Model
+ln_full <- survreg(Surv(time, event_death) ~ age + log(bili) + albumin + sex + factor(edema) + factor(stage),
+                   data = mypbc_complete, dist = "lognormal")
+
+ln_final <- step(ln_full, direction = "both", trace = 0)
+summary(ln_final)
+
+AIC(wei_final, ln_final)
+
+```
+
+Cumulative Incidence Functions
+```{r}
+#CIF for all competing events with status column
+cif <- cuminc(ftime = mypbc_complete$time, fstatus = mypbc_complete$status)
+print(cif)
+
+plot(cif,
+     xlab = "Time (Days)",
+     ylab = "Cumulative Incidence (Probaility)",
+     main = "Cumulative Incidence of Death versus Liver Transplant",
+     col = c("blue", "red"),
+     lwd = 2)
+
+
+```
+
+
+Fine-Gray Subdistribution Hazard Model
+```{r}
+
+matrix_cov <- model.matrix(~ age + log(bili) + albumin + factor(sex) + factor(edema) + factor(stage), 
+                           data = mypbc_complete)[,-1]
+# Fine-Gray Model
+# failcode = 2 death, cencode = 0 censored
+fg_model <- crr(ftime = mypbc_complete$time,
+                fstatus = mypbc_complete$status,
+                cov1 = matrix_cov,
+                failcode = 2,
+                cencode = 0)
+
+summary(fg_model)
+
+```
