@@ -16,6 +16,3 @@ Software: R
 
 Survival Analysis
 Software: R
-
-Longitudinal Analysis
-Software: R
